@@ -15,13 +15,22 @@ A super simple FastAPI application that allows students to view and sign up for 
    pip install fastapi uvicorn
    ```
 
-2. Run the application:
+2. Create a teacher login. The password is stored as a salted PBKDF2 hash in `teachers.json`, which is ignored by Git:
+
+   ```
+   cd src
+   python create_teacher.py teacher-username
+   ```
+
+   `teachers.example.json` shows the expected file shape. Run the setup command once for each teacher account.
+
+3. Run the application from the `src` directory:
 
    ```
    python app.py
    ```
 
-3. Open your browser and go to:
+4. Open your browser and go to:
    - API documentation: http://localhost:8000/docs
    - Alternative documentation: http://localhost:8000/redoc
 
@@ -48,3 +57,5 @@ The application uses a simple data model with meaningful identifiers:
    - Grade level
 
 All data is stored in memory, which means data will be reset when the server restarts.
+
+Activity and participant lists remain public. Teacher login is required for signup and unregister operations. Teacher sessions expire after eight hours and are cleared when the server restarts.

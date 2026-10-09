@@ -3,6 +3,48 @@ document.addEventListener("DOMContentLoaded", () => {
   const activitySelect = document.getElementById("activity");
   const signupForm = document.getElementById("signup-form");
   const messageDiv = document.getElementById("message");
+  const signupContainer = document.getElementById("signup-container");
+  const loginButton = document.getElementById("teacher-login-button");
+  const logoutButton = document.getElementById("teacher-logout-button");
+  const sessionLabel = document.getElementById("teacher-session-label");
+  const loginDialog = document.getElementById("teacher-login-dialog");
+  const loginForm = document.getElementById("teacher-login-form");
+  const loginError = document.getElementById("teacher-login-error");
+  let teacherToken = sessionStorage.getItem("teacherToken");
+  let teacherUsername = "";
+
+  function authHeaders() {
+    return teacherToken ? { Authorization: `Bearer ${teacherToken}` } : {};
+  }
+
+  function syncTeacherControls() {
+    const isTeacher = Boolean(teacherToken);
+    signupContainer.hidden = !isTeacher;
+    loginButton.hidden = isTeacher;
+    logoutButton.hidden = !isTeacher;
+    sessionLabel.hidden = !isTeacher;
+    sessionLabel.textContent = isTeacher ? `Signed in as ${teacherUsername}` : "";
+    document.querySelectorAll(".delete-btn").forEach((button) => {
+      button.hidden = !isTeacher;
+    });
+  }
+
+  function clearTeacherSession() {
+    teacherToken = "";
+    teacherUsername = "";
+    sessionStorage.removeItem("teacherToken");
+    syncTeacherControls();
+  }
+
+  function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, (character) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    })[character]);
+  }
 
   // Function to fetch activities from API
   async function fetchActivities() {
@@ -12,6 +54,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // Clear loading message
       activitiesList.innerHTML = "";
+      activitySelect.replaceChildren(new Option("-- Select an activity --", ""));
 
       // Populate activities list
       Object.entries(activities).forEach(([name, details]) => {
@@ -29,8 +72,10 @@ document.addEventListener("DOMContentLoaded", () => {
               <ul class="participants-list">
                 ${details.participants
                   .map(
-                    (email) =>
-                      `<li><span class="participant-email">${email}</span><button class="delete-btn" data-activity="${name}" data-email="${email}">❌</button></li>`
+                    (email) => `<li>
+                      <span class="participant-email">${escapeHtml(email)}</span>
+                      ${teacherToken ? `<button class="delete-btn" data-activity="${escapeHtml(name)}" data-email="${escapeHtml(email)}" aria-label="Unregister ${escapeHtml(email)}">Remove</button>` : ""}
+                    </li>`
                   )
                   .join("")}
               </ul>
@@ -38,9 +83,9 @@ document.addEventListener("DOMContentLoaded", () => {
             : `<p><em>No participants yet</em></p>`;
 
         activityCard.innerHTML = `
-          <h4>${name}</h4>
-          <p>${details.description}</p>
-          <p><strong>Schedule:</strong> ${details.schedule}</p>
+          <h4>${escapeHtml(name)}</h4>
+          <p>${escapeHtml(details.description)}</p>
+          <p><strong>Schedule:</strong> ${escapeHtml(details.schedule)}</p>
           <p><strong>Availability:</strong> ${spotsLeft} spots left</p>
           <div class="participants-container">
             ${participantsHTML}
@@ -80,6 +125,7 @@ document.addEventListener("DOMContentLoaded", () => {
         )}/unregister?email=${encodeURIComponent(email)}`,
         {
           method: "DELETE",
+          headers: authHeaders(),
         }
       );
 
@@ -92,6 +138,7 @@ document.addEventListener("DOMContentLoaded", () => {
         // Refresh activities list to show updated participants
         fetchActivities();
       } else {
+        if (response.status === 401) clearTeacherSession();
         messageDiv.textContent = result.detail || "An error occurred";
         messageDiv.className = "error";
       }
@@ -124,6 +171,7 @@ document.addEventListener("DOMContentLoaded", () => {
         )}/signup?email=${encodeURIComponent(email)}`,
         {
           method: "POST",
+          headers: authHeaders(),
         }
       );
 
@@ -137,6 +185,7 @@ document.addEventListener("DOMContentLoaded", () => {
         // Refresh activities list to show updated participants
         fetchActivities();
       } else {
+        if (response.status === 401) clearTeacherSession();
         messageDiv.textContent = result.detail || "An error occurred";
         messageDiv.className = "error";
       }
@@ -155,6 +204,73 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // Initialize app
-  fetchActivities();
+  loginButton.addEventListener("click", () => {
+    loginError.textContent = "";
+    loginError.classList.add("hidden");
+    loginForm.reset();
+    loginDialog.showModal();
+  });
+
+  document.getElementById("teacher-login-cancel").addEventListener("click", () => {
+    loginDialog.close();
+  });
+
+  loginForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const formData = new FormData(loginForm);
+    loginError.textContent = "";
+    loginError.classList.add("hidden");
+
+    try {
+      const response = await fetch("/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: formData.get("username"),
+          password: formData.get("password"),
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail || "Unable to sign in");
+
+      teacherToken = result.access_token;
+      teacherUsername = result.username;
+      sessionStorage.setItem("teacherToken", teacherToken);
+      syncTeacherControls();
+      loginDialog.close();
+      await fetchActivities();
+    } catch (error) {
+      loginError.textContent = error.message || "Unable to sign in. Please try again.";
+      loginError.classList.remove("hidden");
+    }
+  });
+
+  logoutButton.addEventListener("click", async () => {
+    try {
+      await fetch("/auth/logout", { method: "POST", headers: authHeaders() });
+    } finally {
+      clearTeacherSession();
+      await fetchActivities();
+    }
+  });
+
+  async function initializeApp() {
+    if (teacherToken) {
+      try {
+        const response = await fetch("/auth/session", { headers: authHeaders() });
+        if (response.ok) {
+          const session = await response.json();
+          teacherUsername = session.username;
+        } else {
+          clearTeacherSession();
+        }
+      } catch {
+        clearTeacherSession();
+      }
+    }
+    syncTeacherControls();
+    await fetchActivities();
+  }
+
+  initializeApp();
 });
